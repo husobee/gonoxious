@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"crypto"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 
 	"github.com/husobee/gonoxious"
@@ -82,6 +84,39 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 			if key, ok := publicKey.(*rsa.PublicKey); ok {
 				log.Println("valid rsa public key")
 				from, _ := m.GetFromAddr()
+
+				// verify signature on content of intro message, using the key
+				contentBytes, err := m.GetContentBytes()
+				if err != nil {
+					log.Println(err.Error())
+					// bad request, respond as such
+					w.WriteHeader(400)
+					w.Write([]byte("bad request"))
+					return
+				}
+
+				sig, err := m.GetSignature()
+				if err != nil {
+					log.Println(err.Error())
+					// bad request, respond as such
+					w.WriteHeader(400)
+					w.Write([]byte("bad request"))
+					return
+				}
+
+				// get the hashsum of the data in content
+				hasher := sha256.New()
+				hasher.Write(contentBytes)
+
+				err = rsa.VerifyPKCS1v15(key, crypto.SHA256, hasher.Sum(nil), sig)
+				if err != nil {
+					log.Println("bad signature: ", err.Error())
+					// bad request, respond as such
+					w.WriteHeader(400)
+					w.Write([]byte("bad request"))
+					return
+				}
+
 				gonoxious.Contacts.Add(gonoxious.NewPeer(from, key))
 				goto Success
 			}

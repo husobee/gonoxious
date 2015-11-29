@@ -24,6 +24,10 @@ type Message interface {
 	GetFromAddr() (string, error)
 	// get the protocol of the message
 	GetProtocol() (Protocol, error)
+	// get signature
+	GetSignature() ([]byte, error)
+	// get content bytes
+	GetContentBytes() ([]byte, error)
 }
 
 // validateProtocol - make sure this is a supported protocol

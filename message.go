@@ -4,6 +4,8 @@
 package gonoxious
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 )
@@ -32,6 +34,7 @@ var (
 	ErrInvalidContentType = errors.New("Invalid Message ContentType")
 	ErrInvalidFromAddr    = errors.New("Invalid From Addr")
 	ErrInvalidPublicKey   = errors.New("Invalid PublicKey")
+	ErrInvalidSignature   = errors.New("Invalid Signature")
 )
 
 func NewMessage() Message {
@@ -39,18 +42,17 @@ func NewMessage() Message {
 }
 
 type messageContent struct {
-	From      string      `json:"from"`
-	PubPEM    string      `json:"pubPem"`
-	To        string      `json:"to"`
-	Type      ContentType `json:"type"`
-	ClearFrom string      `json:"clearFrom"`
-	Data      []byte      `json:"data"`
+	From      string      `json:"from,omitempty"`
+	PubPEM    string      `json:"pubPem,omitempty"`
+	To        string      `json:"to,omitempty"`
+	Type      ContentType `json:"type,omitempty"`
+	ClearFrom string      `json:"clearFrom,omitempty"`
+	Data      []byte      `json:"data,omitempty"`
 }
-
 type message struct {
-	Content   messageContent `json:"content"`
-	Protocol  Protocol       `json:"protocol"`
-	Signature string         `json:"signature"`
+	Content   messageContent `json:"content,omitempty"`
+	Protocol  Protocol       `json:"protocol,omitempty"`
+	Signature string         `json:"signature,omitempty"`
 }
 
 // GetFromAddr - get the from address from the message
@@ -79,6 +81,26 @@ func (im *message) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// GetContentBytes - get the content's data
+func (im *message) GetContentBytes() ([]byte, error) {
+	var err error
+	b, err := json.Marshal(im.Content)
+	return b, err
+}
+
+// GetSignature - get the content's signature
+func (im *message) GetSignature() ([]byte, error) {
+	var err error
+	if im.Signature == "" && im.Content.Type == IntroductionContentType {
+		err = ErrInvalidSignature
+	}
+	data, err := base64.StdEncoding.DecodeString(im.Signature)
+	if err != nil {
+		err = ErrInvalidSignature
+	}
+	return data, err
 }
 
 // GetPubPem - get the content's public pem
