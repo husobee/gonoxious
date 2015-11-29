@@ -3,96 +3,97 @@
 // Package handlers - http.HandlerFuncs for gonoxious
 package handlers
 
-import "net/http"
+import (
+	"encoding/pem"
+	"errors"
+	"io"
+	"log"
+	"net/http"
 
-// ContentType - the type of the content
-type ContentType string
+	"crypto/rsa"
+	"crypto/x509"
 
-// Protocol - the type of the content
-type Protocol string
-
-const (
-	// IntroductionContentType - This is the introduction content type
-	IntroductionContentType = ContentType("introduction")
-	// EncryptedDataContentType - This is the introduction content type
-	EncryptedDataContentType = ContentType("encryptedData")
-	// Protocolv1 - version 1 of the protocol
-	ProtocolV1 = Protocol("1.0")
+	"github.com/husobee/gonoxious"
 )
 
 var (
-	supportedProtocols = []Protocol{
-		ProtocolV1,
-	}
+	errDecodeMessage   = errors.New("Failed to Decode Payload")
+	errValidateMessage = errors.New("Failed to Decode Payload")
 )
 
-// validateProtocol - make sure this is a supported protocol
-func validateProtocol(p Protocol) bool {
-	for _, v := range supportedProtocols {
-		if p == v {
-			return true
-		}
+func decodeAndValidate(m gonoxious.Message, reader io.Reader) error {
+	if err := m.Decode(reader); err != nil {
+		log.Println(err)
+		return errDecodeMessage
 	}
-	return false
-}
-
-type Message interface {
-	GetType() ContentType
-	GetProtocol() Protocol
-}
-
-// IntroductionContent - This is the introduction message structure
-type IntroductionContent struct {
-	From   string      `json:"from"`
-	PubPEM string      `json:"pubPem"`
-	To     string      `json:"to"`
-	Type   ContentType `json:"type"`
-}
-
-// IntroductionMessage - this is the structure of the Introduction Message
-type IntroductionMessage struct {
-	Content   IntroductionContent `json:"content"`
-	Protocol  Protocol            `json:"protocol"`
-	Signature string              `json:"signature"`
-}
-
-// GetType - get the content's type
-func (im *IntroductionMessage) GetType() ContentType {
-	return im.Content.Type
-}
-
-// GetProtocol - get the protocol version of the intro message
-func (im *IntroductionMessage) GetProtocol() Protocol {
-	return im.Protocol
-}
-
-// EncryptedDataContent - this is the content of an encrypted data message
-type EncryptedDataContent struct {
-	Type      ContentType `json:"type"`
-	ClearFrom string      `json:"clearFrom"`
-	Data      []byte      `json:"data"`
-}
-
-// EncryptedDataMessage - this is the structure of the encrypted data message
-type EncryptedDataMessage struct {
-	Content  EncryptedDataContent `json:"content"`
-	Protocol Protocol             `json:"protocol"`
-}
-
-// GetType - get the content's type
-func (edm *EncryptedDataMessage) GetType() ContentType {
-	return edm.Content.Type
-}
-
-// GetProtocol - get the protocol version of the encrypted data  message
-func (edm *EncryptedDataMessage) GetProtocol() Protocol {
-	return edm.Protocol
+	if err := m.Validate(); err != nil {
+		return errValidateMessage
+	}
+	return nil
 }
 
 // ChatHandler - primary handler for chat
 func ChatHandler(w http.ResponseWriter, r *http.Request) {
-	// two types of messages possible, Introduction messages,
-	// and encrypted messages
+	// each post to this handler is a new "message"
+	m := gonoxious.NewMessage()
+
+	// decode and validate the message for correctness
+	defer r.Body.Close()
+	if err := decodeAndValidate(m, r.Body); err != nil {
+		// bad request, respond as such
+		log.Println(err.Error())
+		w.WriteHeader(400)
+		w.Write([]byte("bad request"))
+		return
+	}
+
+	t, err := m.GetType()
+	if err != nil {
+		// bad request, respond as such
+		log.Println(err.Error())
+		w.WriteHeader(400)
+		w.Write([]byte("bad request"))
+		return
+	}
+	switch t {
+	case gonoxious.IntroductionContentType:
+		// do the introduction message process
+		// add this peer as a contact in the contact book
+
+		// read the public key from the content
+		key, err := m.GetPubPEM()
+		if err != nil {
+			log.Println(err.Error())
+			// bad request, respond as such
+			w.WriteHeader(400)
+			w.Write([]byte("bad request"))
+			return
+		}
+		log.Println(key)
+		block, _ := pem.Decode([]byte(key))
+		if block == nil {
+			log.Println("failed to find pem block in key")
+			w.WriteHeader(400)
+			w.Write([]byte("bad request"))
+			return
+		}
+
+		if publicKey, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
+			if key, ok := publicKey.(*rsa.PublicKey); ok {
+				log.Println("valid rsa public key")
+				from, _ := m.GetFromAddr()
+				gonoxious.Contacts.Add(gonoxious.NewPeer(from, key))
+				goto Success
+			}
+			log.Println("NOT valid rsa public key")
+			w.WriteHeader(400)
+			w.Write([]byte("bad request"))
+			return
+		}
+	case gonoxious.EncryptedDataContentType:
+		// do the encrypted message process
+	}
+Success:
 	w.WriteHeader(200)
-	w.Write([]byte(""))
+	w.Write([]byte("ok"))
 }
